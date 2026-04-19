@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calcolatore IP</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background-color: #f8fafc; font-family: 'Inter', sans-serif; }
+        .card { background: white; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
+        .progress-ring__circle { transition: stroke-dashoffset 0.35s; transform: rotate(-90deg); transform-origin: 50% 50%; }
+        .indent-step { border-left: 2px solid #cbd5e1; margin-left: 1rem; padding-left: 1rem; position: relative; }
+        .indent-step::before { content: ""; position: absolute; left: 0; top: 24px; width: 12px; height: 2px; background: #cbd5e1; }
+        .nested-row { transition: all 0.2s ease; }
+        .occupied-row { background-color: #fffbeb !important; border-color: #f59e0b !important; }
+    </style>
+</head>
+<body class="p-4 md:p-8">
+
+    <div class="max-w-6xl mx-auto">
+        <header class="mb-8 text-center">
+            <h1 class="text-3xl font-bold text-slate-800">IP Hierarchy & Utilization Planner</h1>
+            <p class="text-slate-500 italic">Pianifica l'occupazione delle tue reti selezionando le sottoreti</p>
+        </header>
+
+        <!-- Input Principale -->
+        <div class="card p-6 mb-8 border border-slate-200">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 items-end">
+                <div>
+                    <label class="block text-xs font-bold text-slate-500 uppercase mb-1">Indirizzo IP Root (Punto di Partenza)</label>
+                    <div class="flex gap-2">
+                        <input type="text" id="ipInput" value="192.168.1.0" 
+                               class="flex-1 p-2 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 outline-none font-mono">
+                        <select id="cidrSelect" class="w-32 p-2 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 outline-none font-mono"></select>
+                    </div>
+                </div>
+                <div class="flex justify-end items-center gap-4">
+                    <div class="text-right">
+                        <p class="text-[10px] uppercase text-slate-400 font-black">Capacità Totale</p>
+                        <p id="rootCapacity" class="text-xl font-mono text-slate-800 font-bold">-</p>
+                    </div>
+                    <div class="text-right border-l pl-4">
+                        <p class="text-[10px] uppercase text-slate-400 font-black text-amber-600">Occupati Selezionati</p>
+                        <p id="totalOccupiedCount" class="text-xl font-mono text-amber-600 font-bold">0</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="mainContent" class="hidden">
+            <div class="grid grid-cols-1 lg:grid-cols-4 gap-8 mb-8">
+                <!-- Grafico Utilizzo -->
+                <div class="card p-6 flex flex-col items-center justify-center border border-slate-200 lg:col-span-1">
+                    <h2 class="text-[10px] font-black text-slate-400 uppercase mb-4 tracking-widest text-center">Stato della Rete Root</h2>
+                    <div class="relative w-[150px] h-[150px]">
+                        <svg width="150" height="150" viewBox="0 0 100 100">
+                            <circle cx="50" cy="50" r="40" fill="transparent" stroke="#e2e8f0" stroke-width="12" />
+                            <circle id="occupiedRing" cx="50" cy="50" r="40" fill="transparent" 
+                                    stroke="#f59e0b" stroke-width="12" stroke-dasharray="251.3" stroke-dashoffset="251.3"
+                                    class="progress-ring__circle" />
+                            <circle id="overheadRing" cx="50" cy="50" r="40" fill="transparent" 
+                                    stroke="#ef4444" stroke-width="12" stroke-dasharray="251.3" stroke-dashoffset="251.3"
+                                    class="progress-ring__circle" />
+                        </svg>
+                        <div class="absolute inset-0 flex flex-col items-center justify-center text-center">
+                            <span id="freePercent" class="text-xl font-black text-slate-800">0%</span>
+                            <span class="text-[8px] text-slate-400 font-bold uppercase">Disponibile</span>
+                        </div>
+                    </div>
+                    <div class="mt-4 space-y-1 w-full text-[9px] font-bold uppercase">
+                        <div class="flex justify-between"><span class="text-red-500">● Sistema (2)</span><span id="overheadVal">0</span></div>
+                        <div class="flex justify-between"><span class="text-amber-500">● Occupati</span><span id="occupiedVal">0</span></div>
+                        <div class="flex justify-between"><span class="text-slate-400">● Liberi</span><span id="freeVal">0</span></div>
+                    </div>
+                </div>
+
+                <!-- Struttura Gerarchica -->
+                <div class="card p-6 border border-slate-200 lg:col-span-3">
+                    <div class="flex items-center justify-between mb-6">
+                        <h2 class="text-lg font-bold text-slate-700 font-mono italic"># root_network_structure</h2>
+                        <div class="flex gap-2">
+                            <span class="text-[10px] bg-slate-100 px-2 py-1 rounded">Seleziona per occupare</span>
+                        </div>
+                    </div>
+                    
+                    <div id="hierarchyRoot" class="space-y-2">
+                        <!-- Generato dinamicamente -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="errorMsg" class="mt-4 p-4 bg-red-50 text-red-600 rounded-lg hidden border border-red-100 text-sm">
+            Indirizzo IP non valido.
+        </div>
+    </div>
+
+    <script>
+        const cidrSelect = document.getElementById('cidrSelect');
+        const ipInput = document.getElementById('ipInput');
+        const hierarchyRoot = document.getElementById('hierarchyRoot');
+        
+        let occupiedSubnets = new Set(); // Memorizza gli ID delle reti occupate
+
+        // Setup CIDR
+        for (let i = 0; i <= 32; i++) {
+            const opt = document.createElement('option');
+            opt.value = i;
+            opt.textContent = `/${i}`;
+            if (i === 24) opt.selected = true;
+            cidrSelect.appendChild(opt);
+        }
+
+        function ipToLong(ip) {
+            return ip.split('.').reduce((acc, octet) => (acc << 8) + parseInt(octet, 10), 0) >>> 0;
+        }
+
+        function longToIp(long) {
+            return [(long >>> 24) & 0xff, (long >>> 16) & 0xff, (long >>> 8) & 0xff, long & 0xff].join('.');
+        }
+
+        function isValidIp(ip) {
+            return /^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/.test(ip);
+        }
+
+        function calculateGlobalStats() {
+            const ip = ipInput.value.trim();
+            const cidr = parseInt(cidrSelect.value);
+            if (!isValidIp(ip)) return;
+
+            const total = Math.pow(2, 32 - cidr);
+            const usable = cidr <= 30 ? total - 2 : (cidr === 31 ? 2 : 1);
+            const overhead = total - usable;
+
+            // Calcola il totale degli host occupati sommando la dimensione di ogni subnet spuntata
+            let occupiedTotal = 0;
+            occupiedSubnets.forEach(size => {
+                occupiedTotal += size;
+            });
+
+            // Se l'utente spunta tutto, non può superare il totale utilizzabile
+            occupiedTotal = Math.min(occupiedTotal, usable);
+            const free = Math.max(0, usable - occupiedTotal);
+
+            // Update UI
+            document.getElementById('rootCapacity').textContent = usable;
+            document.getElementById('totalOccupiedCount').textContent = occupiedTotal;
+            document.getElementById('overheadVal').textContent = overhead;
+            document.getElementById('occupiedVal').textContent = occupiedTotal;
+            document.getElementById('freeVal').textContent = free;
+            document.getElementById('freePercent').textContent = Math.round((free / usable) * 100) + "%";
+
+            // Update Rings
+            const circ = 2 * Math.PI * 40;
+            document.getElementById('overheadRing').style.strokeDashoffset = circ - (overhead / total * circ);
+            document.getElementById('occupiedRing').style.strokeDashoffset = circ - ((overhead + occupiedTotal) / total * circ);
+        }
+
+        function updateUI() {
+            const ip = ipInput.value.trim();
+            const cidr = parseInt(cidrSelect.value);
+
+            if (!isValidIp(ip)) {
+                document.getElementById('errorMsg').classList.remove('hidden');
+                document.getElementById('mainContent').classList.add('hidden');
+                return;
+            }
+
+            document.getElementById('errorMsg').classList.add('hidden');
+            document.getElementById('mainContent').classList.remove('hidden');
+            
+            occupiedSubnets.clear();
+            hierarchyRoot.innerHTML = '';
+            hierarchyRoot.appendChild(createSubnetRow(ipToLong(ip), cidr, 0));
+            calculateGlobalStats();
+        }
+
+        function createSubnetRow(netLong, cidr, depth) {
+            const size = Math.pow(2, 32 - cidr);
+            const usable = cidr <= 30 ? size - 2 : (cidr === 31 ? 2 : 1);
+            const bcLong = netLong + size - 1;
+            const subId = `${netLong}_${cidr}`;
+
+            const container = document.createElement('div');
+            container.className = `nested-row ${depth > 0 ? 'indent-step mt-1' : ''}`;
+            
+            const content = document.createElement('div');
+            content.className = "flex flex-wrap items-center gap-3 p-3 bg-white border border-slate-200 rounded-lg hover:border-blue-300 transition-all group relative";
+            
+            // Checkbox per occupazione
+            const check = document.createElement('input');
+            check.type = 'checkbox';
+            check.className = "w-4 h-4 rounded border-slate-300 text-amber-500 focus:ring-amber-500 cursor-pointer";
+            check.onchange = (e) => {
+                if(e.target.checked) {
+                    occupiedSubnets.add(usable);
+                    content.classList.add('occupied-row');
+                } else {
+                    occupiedSubnets.delete(usable);
+                    content.classList.remove('occupied-row');
+                }
+                calculateGlobalStats();
+            };
+
+            const mainInfo = document.createElement('div');
+            mainInfo.className = "flex-1 min-w-[200px]";
+            mainInfo.innerHTML = `
+                <div class="flex items-center gap-2">
+                    <span class="font-mono font-bold text-slate-800 text-sm">${longToIp(netLong)}/${cidr}</span>
+                    <span class="text-[10px] px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded font-bold uppercase">Host: ${usable}</span>
+                </div>
+                <div class="grid grid-cols-2 gap-x-4 mt-1">
+                    <div class="text-[10px] text-slate-400 font-mono">Range: ${cidr <= 30 ? longToIp(netLong+1) + ' - ' + longToIp(bcLong-1) : 'P2P/Single'}</div>
+                    <div class="text-[10px] text-slate-400 font-mono text-right">BC: ${longToIp(bcLong)}</div>
+                </div>
+            `;
+
+            const actions = document.createElement('div');
+            const splitBtn = document.createElement('button');
+            splitBtn.innerHTML = `
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
+            `;
+            splitBtn.className = "p-1.5 bg-slate-100 text-slate-500 rounded hover:bg-blue-500 hover:text-white transition-colors disabled:opacity-30";
+            if (cidr >= 32) splitBtn.disabled = true;
+
+            const childrenContainer = document.createElement('div');
+            childrenContainer.className = "hidden";
+
+            splitBtn.onclick = () => {
+                if (childrenContainer.classList.contains('hidden')) {
+                    const newCidr = cidr + 1;
+                    const halfSize = Math.pow(2, 32 - newCidr);
+                    
+                    // Se dividiamo una rete occupata, la liberiamo per sicurezza (o l'utente sceglie i pezzi)
+                    if (check.checked) {
+                        check.checked = false;
+                        occupiedSubnets.delete(usable);
+                        content.classList.remove('occupied-row');
+                        calculateGlobalStats();
+                    }
+
+                    childrenContainer.innerHTML = '';
+                    childrenContainer.appendChild(createSubnetRow(netLong, newCidr, depth + 1));
+                    childrenContainer.appendChild(createSubnetRow(netLong + halfSize, newCidr, depth + 1));
+                    
+                    childrenContainer.classList.remove('hidden');
+                    splitBtn.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"></path></svg>`;
+                    splitBtn.classList.replace('bg-slate-100', 'bg-slate-800');
+                    splitBtn.classList.add('text-white');
+                } else {
+                    // Quando chiudiamo, dobbiamo pulire gli host occupati nei figli
+                    const childChecks = childrenContainer.querySelectorAll('input[type="checkbox"]:checked');
+                    childChecks.forEach(c => c.click()); // Simula l'uncheck per aggiornare il set
+
+                    childrenContainer.classList.add('hidden');
+                    splitBtn.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>`;
+                    splitBtn.classList.replace('bg-slate-800', 'bg-slate-100');
+                    splitBtn.classList.remove('text-white');
+                }
+            };
+
+            content.prepend(check);
+            content.appendChild(mainInfo);
+            content.appendChild(actions);
+            actions.appendChild(splitBtn);
+            
+            container.appendChild(content);
+            container.appendChild(childrenContainer);
+            
+            return container;
+        }
+
+        ipInput.addEventListener('input', updateUI);
+        cidrSelect.addEventListener('change', updateUI);
+
+        // Init
+        updateUI();
+    </script>
+</body>
+</html>
